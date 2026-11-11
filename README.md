@@ -221,8 +221,10 @@ options:
   -o FILE, --output FILE
                         output results to the given file (default: stdout)
   --ignore-vuln ID      ignore a specific vulnerability by its vulnerability
-                        ID; this option can be used multiple times (default:
-                        [])
+                        ID, or by a package-qualified `PKG:ID` to only ignore
+                        it for the named package; matching uses the normalized
+                        package name and any vulnerability alias; this option
+                        can be used multiple times (default: [])
   --disable-pip         don't use `pip` for dependency resolution; this can
                         only be used with hashed requirements files or if the
                         `--no-deps` flag has been provided (default: False)
@@ -452,6 +454,17 @@ It can also be passed multiple times, to ignore multiple reports:
 ```console
 # Run the audit as normal, but exclude any reports that match these IDs
 $ pip-audit --ignore-vuln CVE-XXX-YYYY --ignore-vuln CVE-ZZZ-AAAA
+```
+
+To suppress a report for only one dependency, qualify the vulnerability ID
+with a package name using the `PKG:ID` form. The package name is
+[normalized](https://packaging.python.org/en/latest/specifications/name-normalization/)
+before matching, and the vulnerability is matched against any of its aliases:
+
+```console
+# Ignore CVE-XXX-YYYY only when reported for the `requests` package; the same
+# CVE reported for another dependency is still reported and fails the audit.
+$ pip-audit --ignore-vuln requests:CVE-XXX-YYYY
 ```
 
 ### `pip-audit` takes longer than I expect!

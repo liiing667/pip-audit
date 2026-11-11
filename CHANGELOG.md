@@ -8,6 +8,15 @@ All versions prior to 0.0.9 are untracked.
 
 ## [Unreleased]
 
+### Added
+
+* `--ignore-vuln` now accepts a package-qualified `PKG:ID` form (for example,
+  `--ignore-vuln requests:CVE-XXXX-YYYY`) that only suppresses the matching
+  vulnerability for the named package. Package names are PEP 503 normalized
+  and the vulnerability is matched against any of its aliases; bare
+  vulnerability IDs continue to suppress matches across every dependency
+  ([#1143](https://github.com/pypa/pip-audit/issues/1143))
+
 ### Fixed
 
 * Editable requirements skipped with `--skip-editable` no longer require a hash

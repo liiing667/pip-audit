@@ -14,6 +14,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import IO, NoReturn, cast
 
+from packaging.utils import canonicalize_name
+
 from pip_audit import __version__
 from pip_audit._audit import AuditOptions, Auditor
 from pip_audit._dependency_source import (
@@ -190,6 +192,53 @@ def _fatal(msg: str) -> NoReturn:  # pragma: no cover
     # ensuring that the fatal message is formatted on its own line.
     logger.error(msg)
     sys.exit(1)
+
+
+def _parse_ignore_vulns(
+    ignore_vulns: list[str],
+) -> tuple[set[str], dict[str, set[str]]]:
+    """
+    Parse `--ignore-vuln` arguments into global and package-scoped ignore rules.
+
+    Each argument is either a bare vulnerability ID (`ID`) or a package-qualified
+    vulnerability ID (`PKG:ID`). Bare IDs suppress matching vulnerabilities in
+    every dependency, while `PKG:ID` only suppresses them in the named package;
+    package names are PEP 503 canonicalized.
+    """
+    global_ignores: set[str] = set()
+    package_ignores: dict[str, set[str]] = {}
+    for ignore_vuln in ignore_vulns:
+        package, sep, vuln_id = ignore_vuln.rpartition(":")
+        if not sep:
+            global_ignores.add(ignore_vuln)
+            continue
+
+        package_ignores.setdefault(canonicalize_name(package), set()).add(vuln_id)
+
+    return global_ignores, package_ignores
+
+
+def _is_vuln_ignored(
+    dep: Dependency,
+    vuln: VulnerabilityResult,
+    global_ignores: set[str],
+    package_ignores: dict[str, set[str]],
+) -> bool:
+    """
+    Check whether `vuln` should be suppressed for `dep`.
+
+    A vulnerability matches when any of its IDs (its primary ID or aliases)
+    appears in the global ignore set or in the ignore set scoped to the
+    dependency's canonicalized package name.
+    """
+    if global_ignores and vuln.has_any_id(global_ignores):
+        return True
+
+    scoped_ignores = package_ignores.get(dep.canonical_name)
+    if scoped_ignores and vuln.has_any_id(scoped_ignores):
+        return True
+
+    return False
 
 
 def _parser() -> argparse.ArgumentParser:  # pragma: no cover
@@ -380,8 +429,10 @@ def _parser() -> argparse.ArgumentParser:  # pragma: no cover
         dest="ignore_vulns",
         default=[],
         help=(
-            "ignore a specific vulnerability by its vulnerability ID; "
-            "this option can be used multiple times"
+            "ignore a specific vulnerability by its vulnerability ID, or by a "
+            "package-qualified `PKG:ID` to only ignore it for the named package; "
+            "matching uses the normalized package name and any vulnerability "
+            "alias; this option can be used multiple times"
         ),
     )
     parser.add_argument(
@@ -549,7 +600,7 @@ def audit() -> None:  # pragma: no cover
         vuln_count = 0
         skip_count = 0
         vuln_ignore_count = 0
-        vulns_to_ignore = set(args.ignore_vulns)
+        global_ignores, package_ignores = _parse_ignore_vulns(args.ignore_vulns)
         try:
             for spec, vulns in auditor.audit(source):
                 if spec.is_skipped():
@@ -563,8 +614,12 @@ def audit() -> None:  # pragma: no cover
                     spec = cast(ResolvedDependency, spec)
                     logger.debug(f"Auditing {spec.name} ({spec.version})")
                     state.update_state(f"Auditing {spec.name} ({spec.version})")
-                if vulns_to_ignore:
-                    filtered_vulns = [v for v in vulns if not v.has_any_id(vulns_to_ignore)]
+                if global_ignores or package_ignores:
+                    filtered_vulns = [
+                        v
+                        for v in vulns
+                        if not _is_vuln_ignored(spec, v, global_ignores, package_ignores)
+                    ]
                     vuln_ignore_count += len(vulns) - len(filtered_vulns)
                     vulns = filtered_vulns
                 result[spec] = vulns
